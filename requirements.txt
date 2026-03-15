@@ -1,0 +1,6 @@
+flask
+anthropic
+ezdxf
+python-dotenv
+flask-cors
+requests
