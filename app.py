@@ -6,9 +6,17 @@
 # Then open your browser to: http://localhost:5000
 
 from flask import Flask, request, send_file, render_template, jsonify
+import sys
+print(f"Python version: {sys.version}", flush=True)
+print("Starting app.py imports...", flush=True)
 from flask_cors import CORS
 from parser import parse_brief
-from generator import generate_dxf, generate_svg, generate_section_view, generate_elevation_view, generate_top_view, generate_electrical_plan, generate_water_plan, generate_rigging_plan
+try:
+    from generator import generate_dxf, generate_svg, generate_section_view, generate_elevation_view, generate_top_view, generate_electrical_plan, generate_water_plan, generate_rigging_plan
+    print("Generator imported successfully", flush=True)
+except Exception as e:
+    print(f"Generator import error: {e}", flush=True)
+    raise
 from dotenv import load_dotenv
 import os
 import json
