@@ -6,9 +6,6 @@
 # Then open your browser to: http://localhost:5000
 
 from flask import Flask, request, send_file, render_template, jsonify
-import sys
-print(f"Python version: {sys.version}", flush=True)
-print("Starting app.py imports...", flush=True)
 from flask_cors import CORS
 from parser import parse_brief
 try:

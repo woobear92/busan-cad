@@ -703,3 +703,4 @@ def generate_rigging_plan(parsed_data):
 
     lines.append('</svg>')
     return "\n".join(lines)
+

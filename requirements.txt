@@ -3,7 +3,6 @@ flask-cors
 anthropic
 ezdxf
 python-dotenv
-reportlab
 requests
 gunicorn
 stripe
