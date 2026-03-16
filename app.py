@@ -8,192 +8,151 @@
 from flask import Flask, request, send_file, render_template, jsonify
 from flask_cors import CORS
 from parser import parse_brief
-from generator import generate_dxf, generate_svg
+from generator import generate_dxf, generate_svg, generate_section_view, generate_elevation_view, generate_top_view, generate_electrical_plan, generate_water_plan, generate_rigging_plan
 from dotenv import load_dotenv
 import os
 import json
 from datetime import datetime
+import requests
+import base64
 
-# Load your API key from .env file
 load_dotenv()
 
-# Create the Flask web application
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# Make sure the output folder exists
 os.makedirs("output", exist_ok=True)
 
+STABILITY_API_KEY = os.getenv("STABILITY_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-# ── ROUTE 1: Show the main web page ─────────────────────────
-# When someone visits your website, they see index.html
-@app.route("/")
-def home():
-    return render_template("index.html")
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-
-# ── ROUTE 2: Generate floor plan ────────────────────────────
-# When someone clicks Generate, the browser sends the text here.
-# This route parses it, generates the DXF, and returns the file.
-@app.route("/generate", methods=["POST"])
-def generate():
-    try:
-        # Get the text the user typed
-        data = request.get_json()
-        description = data.get("description", "")
-
-        if not description.strip():
-            return jsonify({"error": "Please enter a description"}), 400
-
-        # Step 1: Parse the text into dimensions
-        print(f"Received: {description[:50]}...")
-        parsed = parse_brief(description)
-
-        if "error" in parsed:
-            return jsonify({"error": parsed["error"]}), 400
-
-        # Step 2: Generate the DXF file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"output/floorplan_{timestamp}.dxf"
-        generate_dxf(parsed, filename)
-
-        # Step 3: Send the DXF file back to the browser as a download
-        return send_file(
-            filename,
-            as_attachment=True,
-            download_name=f"floorplan_{timestamp}.dxf",
-            mimetype="application/dxf"
-        )
-
-    except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"error": f"Something went wrong: {str(e)}"}), 500
-
-
-# ── ROUTE 3: Health check ────────────────────────────────────
-# A simple check to confirm the server is running
-@app.route("/health")
+@app.route('/health')
 def health():
     return jsonify({"status": "running", "message": "Busan CAD API is online"})
-@app.route("/preview", methods=["POST"])
+
+@app.route('/preview', methods=['POST'])
 def preview():
-    """Returns an SVG preview of the floor plan for display in browser."""
     try:
         data = request.get_json()
-        description = data.get("description", "")
-        if not description.strip():
-            return jsonify({"error": "No description"}), 400
+        description = data.get('description', '')
+        view_type = data.get('view_type', 'floor_plan')
 
         parsed = parse_brief(description)
-        if "error" in parsed:
-            return jsonify({"error": parsed["error"]}), 400
 
-        svg = generate_svg(parsed)
-        spaces_summary = []
-        for s in parsed.get("spaces", []):
-            spaces_summary.append({
-                "name": s.get("name"),
-                "length_mm": s.get("length_mm"),
-                "width_mm": s.get("width_mm"),
-                "wall_thickness_mm": s.get("wall_thickness_mm"),
-                "doors": len(s.get("doors", []))
+        if view_type == 'section':
+            svg = generate_section_view(parsed)
+        elif view_type == 'elevation':
+            svg = generate_elevation_view(parsed)
+        elif view_type == 'top':
+            svg = generate_top_view(parsed)
+        elif view_type == 'electrical':
+            svg = generate_electrical_plan(parsed)
+        elif view_type == 'water':
+            svg = generate_water_plan(parsed)
+        elif view_type == 'rigging':
+            svg = generate_rigging_plan(parsed)
+        else:
+            svg = generate_svg(parsed)
+
+        spaces = parsed.get('spaces', [])
+        space_info = []
+        for s in spaces:
+            space_info.append({
+                'name': s.get('name', 'Space'),
+                'length_mm': s.get('length_mm', 0),
+                'width_mm': s.get('width_mm', 0),
+                'wall_thickness_mm': s.get('wall_thickness_mm', 200),
+                'ceiling_height_mm': s.get('ceiling_height_mm', 4000),
+                'doors': s.get('doors', [])
             })
 
         return jsonify({
-            "svg": svg,
-            "spaces": spaces_summary,
-            "assumptions": parsed.get("assumptions", []),
-            "warnings": parsed.get("warnings", [])
+            'svg': svg,
+            'spaces': space_info,
+            'view_type': view_type
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Preview error: {e}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route("/render3d", methods=["POST"])
-def render3d():
-    """Generates a photorealistic 3D render image of the space."""
-    import requests as req
-    import base64
-
+@app.route('/generate', methods=['POST'])
+def generate():
     try:
         data = request.get_json()
-        description = data.get("description", "")
-        spaces = data.get("spaces", [])
+        description = data.get('description', '')
+        parsed = parse_brief(description)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"floorplan_{timestamp}.dxf"
+        filepath = os.path.join("output", filename)
+        generate_dxf(parsed, filepath)
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    except Exception as e:
+        print(f"Generate error: {e}")
+        return jsonify({'error': str(e)}), 500
 
-        # Build a detailed render prompt from the space data
-        space_info = ""
+@app.route('/render3d', methods=['POST'])
+def render3d():
+    try:
+        data = request.get_json()
+        description = data.get('description', '')
+        spaces = data.get('spaces', [])
+
+        if not STABILITY_API_KEY:
+            return jsonify({'error': 'Stability API key not configured'}), 500
+
+        space_info = "exhibition booth"
         if spaces:
             s = spaces[0]
-            length_m = s.get("length_mm", 5000) // 1000
-            width_m = s.get("width_mm", 5000) // 1000
-            name = s.get("name", "exhibition booth")
-            space_info = f"a {length_m} metre by {width_m} metre {name}"
-        else:
-            space_info = "an exhibition booth"
+            length = s.get('length_mm', 10000) / 1000
+            width = s.get('width_mm', 8000) / 1000
+            space_info = f"a {length} metre by {width} metre booth"
 
-        render_prompt = f"""Professional architectural interior 3D render of {space_info}.
-Modern exhibition design, clean minimalist space.
-Empty room showing walls, polished concrete floor, recessed ceiling lights.
-Photorealistic architectural visualization, ray traced lighting.
-High quality render, sharp details, professional photography style.
-Wide angle view showing the full space."""
+        prompt = f"Professional architectural 3D rendering of {space_info}, modern exhibition booth interior design, clean white walls, professional lighting, photorealistic, high quality render"
 
-        negative_prompt = "people, furniture, blurry, low quality, dark, cartoon, drawing, sketch"
-
-        stability_key = os.getenv("STABILITY_API_KEY")
-        if not stability_key:
-            return jsonify({"error": "Stability API key not configured"}), 500
-
-        print(f"Generating 3D render for: {space_info}")
-
-        response = req.post(
+        response = requests.post(
             "https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/text-to-image",
             headers={
-                "Authorization": f"Bearer {stability_key}",
+                "Authorization": f"Bearer {STABILITY_API_KEY}",
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             },
             json={
-                "text_prompts": [
-                    {"text": render_prompt, "weight": 1.0},
-                    {"text": negative_prompt, "weight": -1.0}
-                ],
+                "text_prompts": [{"text": prompt, "weight": 1}],
                 "cfg_scale": 7,
-                "height": 768,
-                "width": 1344,
+                "height": 1024,
+                "width": 1024,
                 "samples": 1,
-                "steps": 30,
-                "style_preset": "photographic"
+                "steps": 30
             },
             timeout=60
         )
 
-        if response.status_code != 200:
-            print(f"Stability API error: {response.status_code} — {response.text}")
-            return jsonify({"error": f"Render failed: {response.status_code}"}), 500
+        if response.status_code == 200:
+            result = response.json()
+            image_base64 = result["artifacts"][0]["base64"]
+            print("3D render generated successfully")
+            return jsonify({
+                "image_base64": image_base64,
+                "space_info": space_info
+            })
+        else:
+            return jsonify({'error': f'Render failed: {response.status_code} {response.text}'}), 500
 
-        result = response.json()
-        image_base64 = result["artifacts"][0]["base64"]
-
-        print("3D render generated successfully")
-        return jsonify({
-            "image_base64": image_base64,
-            "space_info": space_info
-        })
-
-    except req.exceptions.Timeout:
-        return jsonify({"error": "Render timed out — please try again"}), 500
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "Render timed out - please try again"}), 500
     except Exception as e:
         print(f"Render error: {e}")
         return jsonify({"error": str(e)}), 500
-    
-# ── START THE SERVER ─────────────────────────────────────────
-# This runs when you type: py app.py
+
 if __name__ == "__main__":
-    print("="*50)
+    print("=" * 50)
     print("Busan CAD Server starting...")
     print("Open your browser and go to:")
     print("  http://localhost:5000")
-    print("="*50)
-    app.run(debug=True, host="0.0.0.0", port=5000)
-    
+    print("=" * 50)
+    app.run(debug=True, host='0.0.0.0', port=5000)
