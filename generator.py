@@ -698,6 +698,8 @@ def generate_rigging_plan(parsed_data):
         lines.append(f'<text x="{lx+16}" y="{ly+4}" fill="#888" font-size="7" font-family="monospace">Rigging point</text>')
 
         x_offset += sw + pad
+    
+
 
     lines.append('</svg>')
     return "\n".join(lines)
